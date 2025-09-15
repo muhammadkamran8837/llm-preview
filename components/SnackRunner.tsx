@@ -57,6 +57,7 @@ export default function SnackRunner({ llmText }: Props) {
       )}`;
 
       setWebUrl(embedded);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {

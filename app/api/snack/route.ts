@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const MEMORY = new Map<string, any>();
 
 export async function POST(req: Request) {
