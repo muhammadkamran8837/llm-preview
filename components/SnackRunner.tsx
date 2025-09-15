@@ -7,13 +7,7 @@ import { withExpoSnackScaffold } from "@/lib/snackScaffold";
 type Props = { llmText: string };
 const SDK = "53.0.0";
 
-/** Expo SDK 53-compatible versions for common libs.
- *  Add to this map as you encounter new packages.
- */
-// --- at top of SnackRunner.tsx (keep SDK/imports as you have) ---
-// --- keep SDK/imports at the top as-is ---
-
-// Expo SDK 53 compatible versions (extend this as you meet new libs)
+/* ---------- Expo 53 compat versions ---------- */
 const EXPO53_COMPAT: Record<string, string> = {
   // Expo / routing
   "expo-router": "~3.5.22",
@@ -21,13 +15,13 @@ const EXPO53_COMPAT: Record<string, string> = {
   "expo-constants": "~16.0.2",
   "expo-status-bar": "~2.0.0",
 
-  // Navigation/runtime bits commonly required
+  // Navigation/runtime bits
   "react-native-gesture-handler": "~2.16.2",
   "react-native-reanimated": "~3.16.1",
   "react-native-screens": "~4.9.0",
   "react-native-safe-area-context": "4.10.5",
 
-  // Common UI / utilities
+  // Common UI / utils
   "react-native-svg": "15.2.0",
   "react-native-paper": "^5.12.5",
   "@tanstack/react-query": "^5.51.0",
@@ -35,14 +29,13 @@ const EXPO53_COMPAT: Record<string, string> = {
   "@react-native-async-storage/async-storage": "~1.23.1",
   "lucide-react-native": "^0.468.0",
 
-  // If your LLM sometimes emits react-navigation directly:
+  // If LLM emits react-navigation directly
   "@react-navigation/native": "^6.1.18",
   "@react-navigation/native-stack": "^6.10.0",
   "@react-navigation/bottom-tabs": "^6.12.1",
 };
 
 const DO_NOT_INSTALL = new Set([
-  // managed by Snack/Expo SDK
   "react",
   "react-native",
   "react-dom",
@@ -52,13 +45,10 @@ const DO_NOT_INSTALL = new Set([
 
 function rootPackage(mod: string) {
   if (!mod) return null;
-  // ignore relative & alias imports (your local files)
   if (mod.startsWith(".") || mod.startsWith("/") || mod.startsWith("@/"))
-    return null;
-
+    return null; // local/alias
   const parts = mod.split("/");
-  if (mod.startsWith("@")) return parts.slice(0, 2).join("/");
-  return parts[0];
+  return mod.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
 const ROUTER_BASELINE = [
@@ -73,18 +63,14 @@ function detectDependencies(files: Record<string, { contents: string }>) {
   const found = new Set<string>();
   const re = /\b(?:import|require)\s*(?:[^'"]*from\s*)?['"]([^'"]+)['"]/g;
 
-  // 1) Scan for imports
   for (const p of Object.keys(files)) {
     const src = files[p]?.contents ?? "";
     let m: RegExpExecArray | null;
     while ((m = re.exec(src))) {
       const mod = m[1];
       const pkg = rootPackage(mod);
-      if (!pkg) continue;
-      if (DO_NOT_INSTALL.has(pkg)) continue; // <- skip react/react-native/etc
+      if (!pkg || DO_NOT_INSTALL.has(pkg)) continue;
       found.add(pkg);
-
-      // normalize deep-import hints
       if (mod.includes("react-native-reanimated"))
         found.add("react-native-reanimated");
       if (mod.includes("react-native-gesture-handler"))
@@ -93,40 +79,32 @@ function detectDependencies(files: Record<string, { contents: string }>) {
     }
   }
 
-  // 2) If the project uses expo-router structure, add baseline so it boots
   const hasRouter = Object.keys(files).some(
     (p) => p === "App.js" || p.startsWith("app/")
   );
   if (hasRouter) ROUTER_BASELINE.forEach((d) => found.add(d));
-  // Always include expo-router (scaffold entry)
   found.add("expo-router");
 
-  // 3) Map to versions. Unknowns: omit (safer than "latest" for Expo Go).
   const deps: Record<string, string> = {};
   const unknown: string[] = [];
   for (const name of found) {
     if (EXPO53_COMPAT[name]) deps[name] = EXPO53_COMPAT[name];
     else unknown.push(name);
   }
-
-  // If you’d rather attempt unknowns, uncomment the next two lines —
-  // but prefer adding them to EXPO53_COMPAT when you see errors in Expo Go logs.
-  // for (const name of unknown) deps[name] = "latest";
-
+  // Prefer omitting unknowns to avoid SDK mismatches; you can flip to "latest" if desired.
+  if (unknown.length)
+    console.warn("[SnackRunner] omitted unknown packages:", unknown);
   console.log("[SnackRunner] detected packages:", Array.from(found));
   console.log("[SnackRunner] using dependencies:", deps);
-  if (unknown.length) {
-    console.warn(
-      "[SnackRunner] packages not in EXPO53_COMPAT (omitted):",
-      unknown
-    );
-  }
   return deps;
 }
 
+/* ---------- Component ---------- */
 export default function SnackRunner({ llmText }: Props) {
   const [busy, setBusy] = React.useState(false);
   const [webUrl, setWebUrl] = React.useState<string | null>(null);
+  const [snackUrl, setSnackUrl] = React.useState<string | null>(null); // direct “open in Snack” fallback
+  const [codeUrl, setCodeUrl] = React.useState<string | null>(null); // for debugging
   const [error, setError] = React.useState<string | null>(null);
 
   const run = React.useCallback(async () => {
@@ -134,19 +112,21 @@ export default function SnackRunner({ llmText }: Props) {
       setBusy(true);
       setError(null);
       setWebUrl(null);
+      setSnackUrl(null);
+      setCodeUrl(null);
 
       if (!llmText.trim())
         throw new Error("Please paste or upload the LLM .txt first.");
 
-      // 1) parse + scaffold → files
+      // 1) Parse + scaffold → files
       const baseFiles = parseLLMTextToSnackFiles(llmText);
       const files = withExpoSnackScaffold(baseFiles);
       console.log("[SnackRunner] files:", Object.keys(files));
 
-      // 2) auto-detect deps from imports (+ compat map)
+      // 2) Auto-detect deps
       const dependencies = detectDependencies(files);
 
-      // 3) POST payload → get public codeUrl (Vercel Blob)
+      // 3) Upload payload → public codeUrl (Vercel Blob via /api/snack)
       const r = await fetch("/api/snack", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -161,16 +141,39 @@ export default function SnackRunner({ llmText }: Props) {
         const msg = await r.text().catch(() => "");
         throw new Error(`Upload failed: ${r.status} ${msg}`);
       }
-      const { codeUrl } = await r.json();
+      const { codeUrl: urlFromApi } = await r.json();
+      if (!urlFromApi) throw new Error("API did not return codeUrl");
+      setCodeUrl(urlFromApi);
 
-      // 4) build embed URL (single QR inside the iframe)
-      const embedded = `https://snack.expo.dev/embedded?platform=web&preview=true&sdkVersion=${encodeURIComponent(
+      // 4) Sanity-check the JSON at codeUrl (catch Blob/cors issues early)
+      const check = await fetch(urlFromApi);
+      if (!check.ok) throw new Error(`codeUrl not readable: ${check.status}`);
+      const payload = await check.json();
+      if (!payload?.files || !payload?.dependencies || !payload?.sdkVersion) {
+        throw new Error(
+          "codeUrl JSON missing required fields (files/dependencies/sdkVersion)"
+        );
+      }
+      console.log(
+        "[SnackRunner] codeUrl OK. files:",
+        Object.keys(payload.files)
+      );
+
+      // 5) Build embed + a direct Snack link (fallback), add cache-buster
+      const t = Date.now();
+      const embedded = `https://snack.expo.dev/embedded?platform=web&preview=true&supportedPlatforms=ios,android,web&sdkVersion=${encodeURIComponent(
         SDK
       )}&name=${encodeURIComponent("LLM Preview")}&codeUrl=${encodeURIComponent(
-        codeUrl
-      )}`;
+        urlFromApi
+      )}&t=${t}`;
+      const direct = `https://snack.expo.dev/?platform=web&sdkVersion=${encodeURIComponent(
+        SDK
+      )}&name=${encodeURIComponent("LLM Preview")}&codeUrl=${encodeURIComponent(
+        urlFromApi
+      )}&t=${t}`;
 
       setWebUrl(embedded);
+      setSnackUrl(direct);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -191,6 +194,42 @@ export default function SnackRunner({ llmText }: Props) {
         </button>
         {error && <span className="text-sm text-red-600">{error}</span>}
       </div>
+
+      {/* Debug helpers */}
+      {(codeUrl || snackUrl) && (
+        <div className="rounded border p-3 text-xs text-gray-700 space-y-2">
+          {codeUrl && (
+            <div>
+              <span className="font-medium">codeUrl:</span>{" "}
+              <a
+                className="text-blue-600 underline break-all"
+                href={codeUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {codeUrl}
+              </a>
+            </div>
+          )}
+          {snackUrl && (
+            <div>
+              <span className="font-medium">Open in Snack (new tab):</span>{" "}
+              <a
+                className="text-blue-600 underline break-all"
+                href={snackUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {snackUrl}
+              </a>
+            </div>
+          )}
+          <div className="text-gray-500">
+            Tip: if the iframe looks stale, click “Open in Snack” to confirm the
+            payload renders there.
+          </div>
+        </div>
+      )}
 
       <div className="min-h-[720px] w-full overflow-hidden rounded border">
         {webUrl ? (
