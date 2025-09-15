@@ -18,13 +18,15 @@ export default function SnackRunner({ llmText }: Props) {
       setError(null);
       setWebUrl(null);
 
-      if (!llmText.trim()) {
+      if (!llmText.trim())
         throw new Error("Please paste or upload the LLM .txt first.");
-      }
 
+      // 1) parse + scaffold → files
       const baseFiles = parseLLMTextToSnackFiles(llmText);
       const files = withExpoSnackScaffold(baseFiles);
+      console.log("[SnackRunner] files:", Object.keys(files));
 
+      // 2) only the extra libs your code uses
       const dependencies: Record<string, string> = {
         "expo-router": "~3.5.22",
         "@tanstack/react-query": "^5.51.0",
@@ -33,7 +35,8 @@ export default function SnackRunner({ llmText }: Props) {
         "lucide-react-native": "^0.468.0",
       };
 
-      const res = await fetch("/api/snack", {
+      // 3) POST payload → get public codeUrl (Vercel Blob)
+      const r = await fetch("/api/snack", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -43,16 +46,10 @@ export default function SnackRunner({ llmText }: Props) {
           files,
         }),
       });
-      if (!res.ok) throw new Error(`Failed to stage code: ${res.status}`);
-      const { id } = await res.json();
+      if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
+      const { codeUrl } = await r.json();
 
-      // Resolve BASE at runtime only (safe for SSR/prerender)
-      const base =
-        process.env.NEXT_PUBLIC_BASE_URL ??
-        (typeof window !== "undefined" ? window.location.origin : "");
-
-      const codeUrl = `${base}/api/snack?id=${encodeURIComponent(id)}`;
-
+      // 4) build embed URL (single QR inside the iframe)
       const embedded = `https://snack.expo.dev/embedded?platform=web&preview=true&sdkVersion=${encodeURIComponent(
         SDK
       )}&name=${encodeURIComponent("LLM Preview")}&codeUrl=${encodeURIComponent(
@@ -60,10 +57,9 @@ export default function SnackRunner({ llmText }: Props) {
       )}`;
 
       setWebUrl(embedded);
-    } catch (e: unknown) {
-      const msg =
-        e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
-      setError(msg);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (e: any) {
+      setError(e?.message || String(e));
     } finally {
       setBusy(false);
     }

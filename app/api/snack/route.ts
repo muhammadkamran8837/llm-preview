@@ -1,31 +1,31 @@
+// app/api/snack/route.ts
 import { NextResponse } from "next/server";
+import { put } from "@vercel/blob";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const MEMORY = new Map<string, any>();
+// Make sure Vercel doesn't cache this route
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  const body = await req.json();
-  const id = crypto.randomUUID();
-  MEMORY.set(id, body);
-  return NextResponse.json({ id });
-}
+  const payload = await req.json(); // { name, sdkVersion, dependencies, files }
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const id = url.searchParams.get("id") || "";
-  const payload = MEMORY.get(id);
-  if (!payload) return new NextResponse("Not found", { status: 404 });
+  const key = `snacks/${crypto.randomUUID()}.json`;
+  const body = JSON.stringify(payload);
 
-  const res = NextResponse.json(payload);
-  res.headers.set("Access-Control-Allow-Origin", "*");
-  res.headers.set("Cache-Control", "no-store");
-  return res;
+  const { url } = await put(key, body, {
+    access: "public",
+    contentType: "application/json",
+    addRandomSuffix: false,
+    cacheControlMaxAge: 0, // <-- use this (not "cacheControl")
+    token: process.env.BLOB_READ_WRITE_TOKEN, // set this env var on Vercel
+  });
+
+  return NextResponse.json({ codeUrl: url });
 }
 
 export async function OPTIONS() {
   const res = new NextResponse(null, { status: 204 });
   res.headers.set("Access-Control-Allow-Origin", "*");
-  res.headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.headers.set("Access-Control-Allow-Methods", "POST,OPTIONS");
   res.headers.set("Access-Control-Allow-Headers", "Content-Type");
   return res;
 }
