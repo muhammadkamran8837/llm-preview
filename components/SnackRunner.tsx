@@ -11,8 +11,9 @@ const SDK = "53.0.0";
  *  Add to this map as you encounter new packages.
  */
 // --- at top of SnackRunner.tsx (keep SDK/imports as you have) ---
+// --- keep SDK/imports at the top as-is ---
 
-// Expo SDK 53 compatible versions
+// Expo SDK 53 compatible versions (extend this as you meet new libs)
 const EXPO53_COMPAT: Record<string, string> = {
   // Expo / routing
   "expo-router": "~3.5.22",
@@ -20,44 +21,47 @@ const EXPO53_COMPAT: Record<string, string> = {
   "expo-constants": "~16.0.2",
   "expo-status-bar": "~2.0.0",
 
-  // React Navigation runtime pieces used under the hood frequently
+  // Navigation/runtime bits commonly required
   "react-native-gesture-handler": "~2.16.2",
   "react-native-reanimated": "~3.16.1",
   "react-native-screens": "~4.9.0",
   "react-native-safe-area-context": "4.10.5",
 
-  // SVG & common UI libs
+  // Common UI / utilities
   "react-native-svg": "15.2.0",
   "react-native-paper": "^5.12.5",
-
-  // State/cache/etc.
   "@tanstack/react-query": "^5.51.0",
   "@nkzw/create-context-hook": "^1.1.0",
   "@react-native-async-storage/async-storage": "~1.23.1",
-
-  // Icons
   "lucide-react-native": "^0.468.0",
 
-  // Optional, if you ever see these in imports
+  // If your LLM sometimes emits react-navigation directly:
   "@react-navigation/native": "^6.1.18",
   "@react-navigation/native-stack": "^6.10.0",
   "@react-navigation/bottom-tabs": "^6.12.1",
 };
 
+const DO_NOT_INSTALL = new Set([
+  // managed by Snack/Expo SDK
+  "react",
+  "react-native",
+  "react-dom",
+  "expo",
+  "expo-modules-core",
+]);
+
 function rootPackage(mod: string) {
   if (!mod) return null;
-  // ignore relative & alias paths (these are your local files)
+  // ignore relative & alias imports (your local files)
   if (mod.startsWith(".") || mod.startsWith("/") || mod.startsWith("@/"))
     return null;
 
-  // keep only the top-level npm package
   const parts = mod.split("/");
   if (mod.startsWith("@")) return parts.slice(0, 2).join("/");
   return parts[0];
 }
 
-// Heuristic baseline so router apps boot even if code doesn't import these directly
-const BASELINE_FOR_ROUTER = [
+const ROUTER_BASELINE = [
   "expo-router",
   "react-native-gesture-handler",
   "react-native-reanimated",
@@ -69,17 +73,18 @@ function detectDependencies(files: Record<string, { contents: string }>) {
   const found = new Set<string>();
   const re = /\b(?:import|require)\s*(?:[^'"]*from\s*)?['"]([^'"]+)['"]/g;
 
-  // 1) scan all files for import/require
-  for (const path of Object.keys(files)) {
-    const src = files[path]?.contents ?? "";
+  // 1) Scan for imports
+  for (const p of Object.keys(files)) {
+    const src = files[p]?.contents ?? "";
     let m: RegExpExecArray | null;
     while ((m = re.exec(src))) {
       const mod = m[1];
       const pkg = rootPackage(mod);
       if (!pkg) continue;
+      if (DO_NOT_INSTALL.has(pkg)) continue; // <- skip react/react-native/etc
       found.add(pkg);
 
-      // normalize common deep-import hints
+      // normalize deep-import hints
       if (mod.includes("react-native-reanimated"))
         found.add("react-native-reanimated");
       if (mod.includes("react-native-gesture-handler"))
@@ -88,29 +93,31 @@ function detectDependencies(files: Record<string, { contents: string }>) {
     }
   }
 
-  // 2) if your tree has `app/` (router), add baseline nav deps
+  // 2) If the project uses expo-router structure, add baseline so it boots
   const hasRouter = Object.keys(files).some(
     (p) => p === "App.js" || p.startsWith("app/")
   );
-  if (hasRouter) BASELINE_FOR_ROUTER.forEach((d) => found.add(d));
-
-  // 3) Always include expo-router so the scaffold entry resolves
+  if (hasRouter) ROUTER_BASELINE.forEach((d) => found.add(d));
+  // Always include expo-router (scaffold entry)
   found.add("expo-router");
 
-  // 4) Map to SDK-compatible versions; unknowns → "latest" (log them for visibility)
+  // 3) Map to versions. Unknowns: omit (safer than "latest" for Expo Go).
   const deps: Record<string, string> = {};
   const unknown: string[] = [];
   for (const name of found) {
     if (EXPO53_COMPAT[name]) deps[name] = EXPO53_COMPAT[name];
     else unknown.push(name);
   }
-  for (const name of unknown) deps[name] = "latest";
+
+  // If you’d rather attempt unknowns, uncomment the next two lines —
+  // but prefer adding them to EXPO53_COMPAT when you see errors in Expo Go logs.
+  // for (const name of unknown) deps[name] = "latest";
 
   console.log("[SnackRunner] detected packages:", Array.from(found));
-  console.log("[SnackRunner] dependencies:", deps);
+  console.log("[SnackRunner] using dependencies:", deps);
   if (unknown.length) {
     console.warn(
-      "[SnackRunner] unknown packages defaulted to 'latest':",
+      "[SnackRunner] packages not in EXPO53_COMPAT (omitted):",
       unknown
     );
   }
