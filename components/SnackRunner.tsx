@@ -12,16 +12,15 @@ export default function SnackRunner({ llmText }: Props) {
   const [webUrl, setWebUrl] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
-  const BASE = process.env.NEXT_PUBLIC_BASE_URL || window.location.origin;
-
   const run = React.useCallback(async () => {
     try {
       setBusy(true);
       setError(null);
       setWebUrl(null);
 
-      if (!llmText.trim())
+      if (!llmText.trim()) {
         throw new Error("Please paste or upload the LLM .txt first.");
+      }
 
       const baseFiles = parseLLMTextToSnackFiles(llmText);
       const files = withExpoSnackScaffold(baseFiles);
@@ -47,8 +46,12 @@ export default function SnackRunner({ llmText }: Props) {
       if (!res.ok) throw new Error(`Failed to stage code: ${res.status}`);
       const { id } = await res.json();
 
-      // IMPORTANT: use your HTTPS base (ngrok/vercel), not http://localhost
-      const codeUrl = `${BASE}/api/snack?id=${encodeURIComponent(id)}`;
+      // Resolve BASE at runtime only (safe for SSR/prerender)
+      const base =
+        process.env.NEXT_PUBLIC_BASE_URL ??
+        (typeof window !== "undefined" ? window.location.origin : "");
+
+      const codeUrl = `${base}/api/snack?id=${encodeURIComponent(id)}`;
 
       const embedded = `https://snack.expo.dev/embedded?platform=web&preview=true&sdkVersion=${encodeURIComponent(
         SDK
@@ -57,13 +60,14 @@ export default function SnackRunner({ llmText }: Props) {
       )}`;
 
       setWebUrl(embedded);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (e: any) {
-      setError(e?.message || String(e));
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
+      setError(msg);
     } finally {
       setBusy(false);
     }
-  }, [llmText, BASE]);
+  }, [llmText]);
 
   return (
     <div className="grid gap-4">
